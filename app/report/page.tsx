@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { useSession } from "next-auth/react";
@@ -26,6 +26,22 @@ export default function ReportPage() {
   const [isRecording, setIsRecording] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitSuccess, setSubmitSuccess] = useState(false);
+  const [similarLoading, setSimilarLoading] = useState(false);
+  const [similar, setSimilar] = useState<
+    Array<{
+      id: string;
+      images: string[];
+      location: { latitude: number; longitude: number; accuracy?: number };
+      category: string;
+      description: string | null;
+      nagar_nigam: string;
+      status: "submitted" | "in_progress" | "completed";
+      created_at: string;
+      vote_count?: number;
+      has_voted?: boolean;
+    }>
+  >([]);
+  const [votingId, setVotingId] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -90,6 +106,48 @@ export default function ReportPage() {
       setLocationError("Geolocation is not supported by this browser.");
     }
   }, []);
+
+  const canSearchSimilar = useMemo(() => {
+    return Boolean(category && location);
+  }, [category, location]);
+
+  const requireDetailsStep = useMemo(() => {
+    return Boolean(category && nagarNigam && location);
+  }, [category, nagarNigam, location]);
+
+  const hasActiveDuplicates = useMemo(() => {
+    return similar.length > 0 && similar.some((r) => r.status !== "completed");
+  }, [similar]);
+
+  useEffect(() => {
+    const fetchSimilar = async () => {
+      if (!canSearchSimilar) return;
+      try {
+        setSimilarLoading(true);
+        const params = new URLSearchParams({
+          category,
+          lat: String(location!.latitude),
+          lng: String(location!.longitude),
+          nagarNigam: nagarNigam || "",
+        });
+        const res = await fetch(`/api/reports/similar?${params.toString()}`, {
+          method: "GET",
+        });
+        if (!res.ok) {
+          throw new Error("Failed to fetch similar reports");
+        }
+        const data = await res.json();
+        setSimilar(Array.isArray(data.reports) ? data.reports : []);
+      } catch (e) {
+        console.error(e);
+        setSimilar([]);
+      } finally {
+        setSimilarLoading(false);
+      }
+    };
+    fetchSimilar();
+    // re-check when category/location/nagarNigam changes
+  }, [canSearchSimilar, category, location, nagarNigam]);
 
   const startCamera = async () => {
     try {
@@ -239,6 +297,38 @@ export default function ReportPage() {
     }
   };
 
+  const handleVote = async (reportId: string) => {
+    try {
+      setVotingId(reportId);
+      const res = await fetch("/api/reports/vote", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reportId }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to vote");
+      }
+      setSimilar((prev) =>
+        prev.map((r) =>
+          r.id === reportId
+            ? {
+                ...r,
+                vote_count: data.votes ?? (r.vote_count || 0),
+                has_voted: true,
+              }
+            : r
+        )
+      );
+      toast.success("Voted successfully");
+    } catch (e) {
+      console.error(e);
+      toast.error(e instanceof Error ? e.message : "Failed to vote");
+    } finally {
+      setVotingId(null);
+    }
+  };
+
   if (submitSuccess) {
     return (
       <div className="min-h-screen bg-gradient-to-br text-black from-green-50 to-emerald-100 flex items-center justify-center p-4">
@@ -364,6 +454,134 @@ export default function ReportPage() {
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-6">
+            {/* Stepper header */}
+            <ol className="flex items-center w-full">
+              <li className="flex-1 flex items-center">
+                <div className="flex items-center">
+                  <span className="w-6 h-6 flex items-center justify-center rounded-full bg-indigo-600 text-white text-xs font-bold">
+                    1
+                  </span>
+                  <span className="ml-2 text-sm font-medium text-gray-900">
+                    Basics
+                  </span>
+                </div>
+                <div className="flex-1 h-0.5 bg-indigo-200 ml-3" />
+              </li>
+              <li className="flex items-center">
+                <div
+                  className={`flex items-center ${
+                    requireDetailsStep ? "" : "opacity-40"
+                  }`}
+                >
+                  <span
+                    className={`w-6 h-6 flex items-center justify-center rounded-full ${
+                      hasActiveDuplicates ? "bg-yellow-500" : "bg-indigo-600"
+                    } text-white text-xs font-bold`}
+                  >
+                    2
+                  </span>
+                  <span className="ml-2 text-sm font-medium text-gray-900">
+                    {hasActiveDuplicates ? "Vote" : "Details"}
+                  </span>
+                </div>
+              </li>
+            </ol>
+
+            {/* Step 2 (vote) when duplicates exist */}
+            {requireDetailsStep && hasActiveDuplicates && (
+              <div className="p-4 rounded-lg border bg-gray-50">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="font-semibold text-gray-900">
+                    Step 2: Vote on existing issue
+                  </h3>
+                  {similarLoading && (
+                    <span className="text-xs text-gray-500">Checking…</span>
+                  )}
+                </div>
+                {similar.length > 0 && (
+                  <div className="space-y-3">
+                    {similar.map((r) => (
+                      <div
+                        key={r.id}
+                        className="border rounded-lg p-3 bg-white"
+                      >
+                        <div className="flex items-start gap-3">
+                          {r.images?.[0] && (
+                            <Image
+                              src={r.images[0]}
+                              alt="Existing report"
+                              width={96}
+                              height={72}
+                              className="w-24 h-18 object-cover rounded"
+                            />
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium text-gray-900">
+                                {r.category}
+                              </span>
+                              <span
+                                className={
+                                  "text-xs px-2 py-0.5 rounded " +
+                                  (r.status === "submitted"
+                                    ? "bg-yellow-100 text-yellow-800"
+                                    : r.status === "in_progress"
+                                    ? "bg-blue-100 text-blue-800"
+                                    : "bg-green-100 text-green-800")
+                                }
+                              >
+                                {r.status === "submitted"
+                                  ? "Submitted"
+                                  : r.status === "in_progress"
+                                  ? "In Progress"
+                                  : "Completed"}
+                              </span>
+                            </div>
+                            {r.description && (
+                              <p className="text-sm text-gray-700 mt-1 line-clamp-2">
+                                {r.description}
+                              </p>
+                            )}
+                            <div className="mt-2 flex items-center gap-3">
+                              {r.status === "submitted" ||
+                              r.status === "in_progress" ? (
+                                <button
+                                  type="button"
+                                  disabled={votingId === r.id || r.has_voted}
+                                  onClick={() => handleVote(r.id)}
+                                  className="inline-flex items-center gap-1 text-sm text-indigo-700 hover:text-indigo-900"
+                                >
+                                  <svg
+                                    className="w-4 h-4"
+                                    viewBox="0 0 20 20"
+                                    fill="currentColor"
+                                  >
+                                    <path d="M3 12l7-8 7 8h-4v6H7v-6H3z" />
+                                  </svg>
+                                  {votingId === r.id
+                                    ? "Voting…"
+                                    : r.has_voted
+                                    ? "Voted"
+                                    : "Vote"}
+                                </button>
+                              ) : (
+                                <span className="text-xs text-gray-500">
+                                  Completed; you can still submit if it
+                                  restarted
+                                </span>
+                              )}
+                              <span className="text-xs text-gray-500">
+                                {r.vote_count ?? 0} votes
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             {/* Location Status */}
             <div className="p-4 rounded-lg border">
               <div className="flex items-center space-x-3">
@@ -392,104 +610,115 @@ export default function ReportPage() {
               </div>
             </div>
 
-            {/* Photo Capture */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Photos of the Issue * (Up to 5 photos)
-              </label>
-              <p className="text-sm text-gray-500 mb-4">
-                {images.length}/5 photos captured
-              </p>
+            {/* Gate details until basic fields chosen */}
+            {!requireDetailsStep && (
+              <div className="p-4 rounded-lg border bg-yellow-50 text-yellow-900">
+                <p className="text-sm">
+                  Select category, Nagar Nigam and allow location to continue.
+                </p>
+              </div>
+            )}
 
-              {/* Display captured images */}
-              {images.length > 0 && (
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
-                  {images.map((image, index) => (
-                    <div key={index} className="relative">
-                      <Image
-                        src={image}
-                        alt={`Captured issue ${index + 1}`}
-                        width={200}
-                        height={150}
-                        className="w-full h-32 object-cover rounded-lg"
-                      />
+            {/* Step 2 (details) only when no active duplicates */}
+            {requireDetailsStep && !hasActiveDuplicates && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Photos of the Issue * (Up to 5 photos)
+                </label>
+                <p className="text-sm text-gray-500 mb-4">
+                  {images.length}/5 photos captured
+                </p>
+
+                {/* Display captured images */}
+                {images.length > 0 && (
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
+                    {images.map((image, index) => (
+                      <div key={index} className="relative">
+                        <Image
+                          src={image}
+                          alt={`Captured issue ${index + 1}`}
+                          width={200}
+                          height={150}
+                          className="w-full h-32 object-cover rounded-lg"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => removeImage(index)}
+                          className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm hover:bg-red-600 transition-colors"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Camera capture */}
+                {images.length < 5 && (
+                  <div className="space-y-4">
+                    {!isCapturing ? (
                       <button
                         type="button"
-                        onClick={() => removeImage(index)}
-                        className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm hover:bg-red-600 transition-colors"
+                        onClick={startCamera}
+                        className="w-full h-48 border-2 border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center hover:border-indigo-500 transition-colors"
                       >
-                        ×
+                        <svg
+                          className="w-12 h-12 text-gray-400 mb-2"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"
+                          />
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"
+                          />
+                        </svg>
+                        <span className="text-gray-600">
+                          Tap to take photo {images.length + 1}
+                        </span>
                       </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Camera capture */}
-              {images.length < 5 && (
-                <div className="space-y-4">
-                  {!isCapturing ? (
-                    <button
-                      type="button"
-                      onClick={startCamera}
-                      className="w-full h-48 border-2 border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center hover:border-indigo-500 transition-colors"
-                    >
-                      <svg
-                        className="w-12 h-12 text-gray-400 mb-2"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"
-                        />
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"
-                        />
-                      </svg>
-                      <span className="text-gray-600">
-                        Tap to take photo {images.length + 1}
-                      </span>
-                    </button>
-                  ) : (
-                    <div className="space-y-4">
-                      <div className="relative">
-                        <video
-                          ref={videoRef}
-                          autoPlay
-                          playsInline
-                          className="w-full h-48 object-cover rounded-lg"
-                        />
-                        <div className="absolute inset-0 flex items-center justify-center">
-                          <div className="bg-black bg-opacity-50 rounded-full p-4">
-                            <button
-                              type="button"
-                              onClick={capturePhoto}
-                              className="w-16 h-16 bg-white rounded-full flex items-center justify-center hover:bg-gray-100 transition-colors"
-                            >
-                              <div className="w-12 h-12 bg-red-500 rounded-full"></div>
-                            </button>
+                    ) : (
+                      <div className="space-y-4">
+                        <div className="relative">
+                          <video
+                            ref={videoRef}
+                            autoPlay
+                            playsInline
+                            className="w-full h-48 object-cover rounded-lg"
+                          />
+                          <div className="absolute inset-0 flex items-center justify-center">
+                            <div className="bg-black bg-opacity-50 rounded-full p-4">
+                              <button
+                                type="button"
+                                onClick={capturePhoto}
+                                className="w-16 h-16 bg-white rounded-full flex items-center justify-center hover:bg-gray-100 transition-colors"
+                              >
+                                <div className="w-12 h-12 bg-red-500 rounded-full"></div>
+                              </button>
+                            </div>
                           </div>
                         </div>
+                        <button
+                          type="button"
+                          onClick={stopCamera}
+                          className="w-full bg-gray-500 text-white py-2 px-4 rounded-lg hover:bg-gray-600 transition-colors"
+                        >
+                          Cancel
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        onClick={stopCamera}
-                        className="w-full bg-gray-500 text-white py-2 px-4 rounded-lg hover:bg-gray-600 transition-colors"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Category Selection */}
             <div>
@@ -531,114 +760,114 @@ export default function ReportPage() {
               </select>
             </div>
 
-            {/* Description */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Description (Optional)
-              </label>
-              <textarea
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                rows={4}
-                className="w-full border text-black border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                placeholder="Provide additional details about the issue..."
-              />
-            </div>
+            {/* Description (only when no active duplicates) */}
+            {requireDetailsStep && !hasActiveDuplicates && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Description (Optional)
+                </label>
+                <textarea
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  rows={4}
+                  className="w-full border text-black border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  placeholder="Provide additional details about the issue..."
+                />
+              </div>
+            )}
 
-            {/* Voice Note */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Voice Note (Optional)
-              </label>
-              <p className="text-sm text-gray-500 mb-4">
-                Record a voice note to provide additional context about the
-                issue
-              </p>
+            {/* Voice Note (only when no active duplicates) */}
+            {requireDetailsStep && !hasActiveDuplicates && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Voice Note (Optional)
+                </label>
+                <p className="text-sm text-gray-500 mb-4">
+                  Record a voice note to provide additional context about the
+                  issue
+                </p>
 
-              {!voiceNote ? (
-                <div className="space-y-4">
-                  {!isRecording ? (
-                    <button
-                      type="button"
-                      onClick={startVoiceRecording}
-                      className="w-full flex items-center justify-center px-4 py-3 border border-gray-300 rounded-lg shadow-sm bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                    >
+                {!voiceNote ? (
+                  <div className="space-y-4">
+                    {!isRecording ? (
+                      <button
+                        type="button"
+                        onClick={startVoiceRecording}
+                        className="w-full flex items-center justify-center px-4 py-3 border border-gray-300 rounded-lg shadow-sm bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                      >
+                        <svg
+                          className="w-5 h-5 mr-2 text-red-500"
+                          fill="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" />
+                          <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" />
+                        </svg>
+                        Start Recording
+                      </button>
+                    ) : (
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-center p-4 bg-red-50 rounded-lg">
+                          <div className="flex items-center space-x-3">
+                            <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
+                            <span className="text-red-700 font-medium">
+                              Recording...
+                            </span>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={stopVoiceRecording}
+                          className="w-full bg-red-500 text-white py-2 px-4 rounded-lg hover:bg-red-600 transition-colors"
+                        >
+                          Stop Recording
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="flex items-center space-x-3 p-4 bg-green-50 rounded-lg">
                       <svg
-                        className="w-5 h-5 mr-2 text-red-500"
+                        className="w-5 h-5 text-green-500"
                         fill="currentColor"
                         viewBox="0 0 24 24"
                       >
                         <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" />
                         <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" />
                       </svg>
-                      Start Recording
-                    </button>
-                  ) : (
-                    <div className="space-y-4">
-                      <div className="flex items-center justify-center p-4 bg-red-50 rounded-lg">
-                        <div className="flex items-center space-x-3">
-                          <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
-                          <span className="text-red-700 font-medium">
-                            Recording...
-                          </span>
-                        </div>
-                      </div>
+                      <span className="text-green-700 font-medium">
+                        Voice note recorded
+                      </span>
+                    </div>
+                    <div className="flex space-x-2">
+                      <audio controls className="flex-1">
+                        <source src={voiceNote} type="audio/wav" />
+                        Your browser does not support the audio element.
+                      </audio>
                       <button
                         type="button"
-                        onClick={stopVoiceRecording}
-                        className="w-full bg-red-500 text-white py-2 px-4 rounded-lg hover:bg-red-600 transition-colors"
+                        onClick={removeVoiceNote}
+                        className="bg-red-500 text-white px-3 py-2 rounded-lg hover:bg-red-600 transition-colors"
                       >
-                        Stop Recording
+                        Remove
                       </button>
                     </div>
-                  )}
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <div className="flex items-center space-x-3 p-4 bg-green-50 rounded-lg">
-                    <svg
-                      className="w-5 h-5 text-green-500"
-                      fill="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" />
-                      <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" />
-                    </svg>
-                    <span className="text-green-700 font-medium">
-                      Voice note recorded
-                    </span>
                   </div>
-                  <div className="flex space-x-2">
-                    <audio controls className="flex-1">
-                      <source src={voiceNote} type="audio/wav" />
-                      Your browser does not support the audio element.
-                    </audio>
-                    <button
-                      type="button"
-                      onClick={removeVoiceNote}
-                      className="bg-red-500 text-white px-3 py-2 rounded-lg hover:bg-red-600 transition-colors"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
+                )}
+              </div>
+            )}
 
             {/* Submit Button */}
-            <button
-              type="submit"
-              disabled={
-                images.length === 0 ||
-                !location ||
-                !category ||
-                !nagarNigam ||
-                isSubmitting
-              }
-              className="w-full bg-indigo-600 text-white py-3 px-4 rounded-lg hover:bg-indigo-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-semibold"
-            >
-              {isSubmitting ? "Submitting..." : "Submit Report"}
-            </button>
+            {requireDetailsStep && !hasActiveDuplicates && (
+              <button
+                type="submit"
+                disabled={images.length === 0 || isSubmitting}
+                className="w-full bg-indigo-600 text-white py-3 px-4 rounded-lg hover:bg-indigo-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-semibold"
+              >
+                {isSubmitting ? "Submitting..." : "Submit Report"}
+              </button>
+            )}
           </form>
         </div>
       </div>

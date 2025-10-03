@@ -20,7 +20,7 @@ export async function GET() {
     const { count: resolvedReports, error: resolvedError } = await supabase
       .from("reports")
       .select("*", { count: "exact", head: true })
-      .eq("status", "resolved");
+      .eq("status", "completed");
 
     if (resolvedError) {
       console.error("Error fetching resolved reports:", resolvedError);
