@@ -78,6 +78,8 @@ export default function MunicipalPage() {
       }
 
       const data = await response.json();
+      console.log("Fetched reports:", data.reports);
+      console.log("Sample report location:", data.reports[0]?.location);
       setReports(data.reports);
       setStats(data.stats);
     } catch (error) {
@@ -372,18 +374,33 @@ export default function MunicipalPage() {
               </div>
 
               {/* Location Map */}
-              {report.location && (
+              {report.location ? (
                 <div className="mb-4">
                   <h4 className="font-medium text-gray-900 mb-2">Location:</h4>
+                  <div className="bg-gray-100 rounded-lg p-4 mb-2">
+                    <p className="text-sm text-gray-600">
+                      Coordinates: {report.location.latitude.toFixed(6)},{" "}
+                      {report.location.longitude.toFixed(6)}
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      Accuracy: ±{report.location.accuracy}m
+                    </p>
+                  </div>
                   <GoogleMap
                     latitude={report.location.latitude}
                     longitude={report.location.longitude}
                     className="w-full h-48 rounded-lg"
                     zoom={16}
                   />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Accuracy: ±{report.location.accuracy}m
-                  </p>
+                </div>
+              ) : (
+                <div className="mb-4">
+                  <h4 className="font-medium text-gray-900 mb-2">Location:</h4>
+                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                    <p className="text-yellow-800 text-sm">
+                      ⚠️ No location data available for this report
+                    </p>
+                  </div>
                 </div>
               )}
 

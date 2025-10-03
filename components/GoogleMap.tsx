@@ -22,10 +22,27 @@ export default function GoogleMap({
 
     // Check if API key is available
     const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
-    if (!apiKey) {
+    if (!apiKey || apiKey === "your_google_maps_api_key_here") {
       console.warn(
         "Google Maps API key not found. Please add NEXT_PUBLIC_GOOGLE_MAPS_API_KEY to your environment variables."
       );
+      // Show a message in the map container
+      if (mapRef.current) {
+        mapRef.current.innerHTML = `
+          <div class="flex items-center justify-center h-full bg-gray-100 rounded-lg">
+            <div class="text-center text-gray-500 p-4">
+              <svg class="w-8 h-8 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+              </svg>
+              <p class="text-sm font-medium">Google Maps API Key Required</p>
+              <p class="text-xs mt-1">Add NEXT_PUBLIC_GOOGLE_MAPS_API_KEY to .env</p>
+              <p class="text-xs mt-1">Lat: ${latitude.toFixed(
+                4
+              )}, Lng: ${longitude.toFixed(4)}</p>
+            </div>
+          </div>
+        `;
+      }
       return;
     }
 
@@ -101,8 +118,34 @@ export default function GoogleMap({
     <div className={className}>
       <div
         ref={mapRef}
-        className="w-full h-full rounded-lg border border-gray-200"
-      />
+        className="w-full h-full rounded-lg border border-gray-200 bg-gray-100 flex items-center justify-center"
+      >
+        <div className="text-center text-gray-500">
+          <svg
+            className="w-8 h-8 mx-auto mb-2"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"
+            />
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
+            />
+          </svg>
+          <p className="text-sm">Loading map...</p>
+          <p className="text-xs mt-1">
+            Lat: {latitude.toFixed(4)}, Lng: {longitude.toFixed(4)}
+          </p>
+        </div>
+      </div>
     </div>
   );
 }
