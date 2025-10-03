@@ -6,6 +6,7 @@ import Navigation from "@/components/Navigation";
 import Image from "next/image";
 import { getMunicipalSession, MunicipalSession } from "@/lib/municipalAuth";
 import { toast } from "react-toastify";
+import GoogleMap from "@/components/GoogleMap";
 
 interface Report {
   id: string;
@@ -164,7 +165,7 @@ export default function MunicipalPage() {
     });
   };
 
-  const filteredReports = reports.filter((report) => {
+  const filteredReports = reports.filter((report: Report) => {
     if (filter === "all") return true;
     return report.status === filter;
   });
@@ -337,7 +338,7 @@ export default function MunicipalPage() {
 
         {/* Reports List */}
         <div className="space-y-6">
-          {filteredReports.map((report) => (
+          {filteredReports.map((report: Report) => (
             <div key={report.id} className="bg-white rounded-xl shadow-lg p-6">
               <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between mb-4">
                 <div className="flex-1">
@@ -354,7 +355,7 @@ export default function MunicipalPage() {
                     </span>
                   </div>
                   <p className="text-gray-600 mb-2">
-                    Reported by: {report.user_name}
+                    Report ID: {report.id.slice(0, 8)}...
                   </p>
                   <p className="text-sm text-gray-500">
                     Submitted on {formatDate(report.created_at)}
@@ -370,6 +371,22 @@ export default function MunicipalPage() {
                 </div>
               </div>
 
+              {/* Location Map */}
+              {report.location && (
+                <div className="mb-4">
+                  <h4 className="font-medium text-gray-900 mb-2">Location:</h4>
+                  <GoogleMap
+                    latitude={report.location.latitude}
+                    longitude={report.location.longitude}
+                    className="w-full h-48 rounded-lg"
+                    zoom={16}
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Accuracy: ±{report.location.accuracy}m
+                  </p>
+                </div>
+              )}
+
               {report.description && (
                 <div className="mb-4">
                   <h4 className="font-medium text-gray-900 mb-1">
@@ -383,7 +400,7 @@ export default function MunicipalPage() {
                 <div className="mb-4">
                   <h4 className="font-medium text-gray-900 mb-2">Photos:</h4>
                   <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2">
-                    {report.images.map((image, index) => (
+                    {report.images.map((image: string, index: number) => (
                       <div key={index} className="relative">
                         <Image
                           src={image}
