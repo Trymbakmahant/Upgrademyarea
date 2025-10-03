@@ -5,9 +5,10 @@ import { authOptions } from "@/lib/auth";
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const session = await getServerSession(authOptions);
     console.log("session", session);
     if (!session?.user?.email) {
@@ -57,7 +58,7 @@ export async function PUT(
         admin_notes: adminNotes || null,
         updated_at: new Date().toISOString(),
       })
-      .eq("id", params.id)
+      .eq("id", id)
       .eq("nagar_nigam", adminData.nagar_nigam) // Ensure admin can only update their jurisdiction
       .select()
       .single();
@@ -83,9 +84,10 @@ export async function PUT(
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const session = await getServerSession(authOptions);
 
     if (!session?.user?.email) {
@@ -95,7 +97,7 @@ export async function GET(
     const { data, error } = await supabase
       .from("reports")
       .select("*")
-      .eq("id", params.id)
+      .eq("id", id)
       .single();
 
     if (error) {
