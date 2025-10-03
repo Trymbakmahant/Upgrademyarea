@@ -90,11 +90,20 @@ export default function MunicipalPage() {
   const updateReportStatus = async (reportId: string, newStatus: string) => {
     try {
       setUpdating(true);
+
+      // Get municipal session for authorization
+      const session = getMunicipalSession();
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+
+      if (session) {
+        headers["x-municipal-session"] = JSON.stringify(session);
+      }
+
       const response = await fetch(`/api/reports/${reportId}`, {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers,
         body: JSON.stringify({
           status: newStatus,
           adminNotes: adminNotes,
@@ -467,7 +476,7 @@ export default function MunicipalPage() {
                         | "completed",
                     })
                   }
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full border text-black border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 >
                   <option value="submitted">Submitted</option>
                   <option value="in_progress">In Progress</option>
@@ -483,7 +492,7 @@ export default function MunicipalPage() {
                   value={adminNotes}
                   onChange={(e) => setAdminNotes(e.target.value)}
                   rows={3}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full border text-black border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   placeholder="Add notes about the status update..."
                 />
               </div>

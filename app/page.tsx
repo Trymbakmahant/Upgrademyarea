@@ -1,5 +1,6 @@
 import Link from "next/link";
 import Navigation from "@/components/Navigation";
+import { StatisticsSection } from "@/components/StatisticsSection";
 
 export default function Home() {
   return (
@@ -129,6 +130,9 @@ export default function Home() {
           </div>
         </div>
       </section>
+
+      {/* Statistics Section */}
+      <StatisticsSection />
 
       {/* Issue Types Section */}
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
