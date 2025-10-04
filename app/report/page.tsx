@@ -52,6 +52,7 @@ export default function ReportPage() {
   const [classifyingImages, setClassifyingImages] = useState<Set<number>>(
     new Set()
   );
+  const processedImagesRef = useRef<Set<number>>(new Set());
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -202,55 +203,95 @@ export default function ReportPage() {
 
   const removeImage = (index: number) => {
     setImages(images.filter((_, i) => i !== index));
+    // Clean up processed images ref and AI suggestions
+    const newProcessed = new Set<number>();
+    const newSuggestions: typeof aiSuggestions = {};
+
+    processedImagesRef.current.forEach((processedIndex) => {
+      if (processedIndex < index) {
+        newProcessed.add(processedIndex);
+        newSuggestions[processedIndex] = aiSuggestions[processedIndex];
+      } else if (processedIndex > index) {
+        newProcessed.add(processedIndex - 1);
+        newSuggestions[processedIndex - 1] = aiSuggestions[processedIndex];
+      }
+    });
+
+    processedImagesRef.current = newProcessed;
+    setAiSuggestions(newSuggestions);
   };
 
-  // Classify all uploaded images
+  // Classify all uploaded images with debouncing and rate limiting
   useEffect(() => {
-    const classifyAllImages = async () => {
-      for (let i = 0; i < images.length; i++) {
-        // Skip if already classified or currently classifying
-        if (aiSuggestions[i] || classifyingImages.has(i)) continue;
+    let timeoutId: NodeJS.Timeout;
 
-        setClassifyingImages((prev) => new Set(prev).add(i));
+    const classifyAllImages = () => {
+      // Wait 3 seconds after last image change to avoid rapid requests
+      timeoutId = setTimeout(async () => {
+        for (let i = 0; i < images.length; i++) {
+          // Skip if already processed, classified, or currently classifying
+          if (
+            processedImagesRef.current.has(i) ||
+            aiSuggestions[i] ||
+            classifyingImages.has(i)
+          )
+            continue;
 
-        try {
-          const res = await fetch("/api/ai/classify", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ image: images[i], categories }),
-          });
+          setClassifyingImages((prev) => new Set(prev).add(i));
 
-          if (res.ok) {
-            const data = await res.json();
-            if (data?.category) {
-              setAiSuggestions((prev) => ({
-                ...prev,
-                [i]: {
-                  category: data.category,
-                  confidence: data.confidence ?? null,
-                  reason: data.reason ?? "",
-                },
-              }));
+          try {
+            // Add delay between requests to respect rate limits (6 requests per minute)
+            if (i > 0) {
+              await new Promise((resolve) => setTimeout(resolve, 12000)); // 12 second delay = 5 requests per minute
             }
+
+            const res = await fetch("/api/ai/classify", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ image: images[i], categories }),
+            });
+
+            if (res.ok) {
+              const data = await res.json();
+              if (data?.category) {
+                setAiSuggestions((prev) => ({
+                  ...prev,
+                  [i]: {
+                    category: data.category,
+                    confidence: data.confidence ?? null,
+                    reason: data.reason ?? "",
+                  },
+                }));
+              }
+            }
+          } catch (e) {
+            console.error(`Failed to classify image ${i}:`, e);
+          } finally {
+            // Mark as processed regardless of success/failure
+            processedImagesRef.current.add(i);
+            setClassifyingImages((prev) => {
+              const newSet = new Set(prev);
+              newSet.delete(i);
+              return newSet;
+            });
           }
-        } catch (e) {
-          console.error(`Failed to classify image ${i}:`, e);
-        } finally {
-          setClassifyingImages((prev) => {
-            const newSet = new Set(prev);
-            newSet.delete(i);
-            return newSet;
-          });
         }
-      }
+      }, 3000); // 3 second debounce
     };
 
     if (images.length > 0) {
       classifyAllImages();
     } else {
       setAiSuggestions({});
+      processedImagesRef.current.clear();
     }
-  }, [images, categories, aiSuggestions, classifyingImages]);
+
+    return () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    };
+  }, [images.length, categories]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const startVoiceRecording = async () => {
     try {

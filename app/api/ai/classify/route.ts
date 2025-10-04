@@ -4,6 +4,9 @@ const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
 const DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions";
 const HUGGINGFACE_API_URL =
   "https://api-inference.huggingface.co/models/Salesforce/blip-image-captioning-base";
+const GOOGLE_VISION_API_URL =
+  "https://vision.googleapis.com/v1/images:annotate";
+const REPLICATE_API_URL = "https://api.replicate.com/v1/predictions";
 
 export async function POST(request: NextRequest) {
   try {
@@ -13,6 +16,10 @@ export async function POST(request: NextRequest) {
         ? process.env.DEEPSEEK_API_KEY
         : provider === "huggingface"
         ? process.env.HUGGINGFACE_API_KEY
+        : provider === "google"
+        ? process.env.GOOGLE_VISION_API_KEY
+        : provider === "replicate"
+        ? process.env.REPLICATE_API_TOKEN
         : process.env.OPENAI_API_KEY;
 
     // Mock provider doesn't need API key
@@ -24,12 +31,20 @@ export async function POST(request: NextRequest) {
               ? "Missing DEEPSEEK_API_KEY"
               : provider === "huggingface"
               ? "Missing HUGGINGFACE_API_KEY"
+              : provider === "google"
+              ? "Missing GOOGLE_VISION_API_KEY"
+              : provider === "replicate"
+              ? "Missing REPLICATE_API_TOKEN"
               : "Missing OPENAI_API_KEY",
           hint:
             provider === "deepseek"
               ? "Set DEEPSEEK_API_KEY and optionally AI_PROVIDER=deepseek"
               : provider === "huggingface"
               ? "Set HUGGINGFACE_API_KEY (get free token at huggingface.co/settings/tokens)"
+              : provider === "google"
+              ? "Set GOOGLE_VISION_API_KEY (get free key at console.cloud.google.com)"
+              : provider === "replicate"
+              ? "Set REPLICATE_API_TOKEN (get free token at replicate.com/account/api-tokens)"
               : provider === "mock"
               ? "Set AI_PROVIDER=mock for demo mode (no API key needed)"
               : "Set OPENAI_API_KEY or set AI_PROVIDER=deepseek with DEEPSEEK_API_KEY",
@@ -67,7 +82,223 @@ The category must be either one of the provided categories, or the string NONE.`
     let payload: Record<string, unknown>;
     let apiUrl: string;
 
-    if (provider === "mock") {
+    if (provider === "google") {
+      // Google Vision API - free tier available
+      const base64Data = image.replace(/^data:image\/[a-z]+;base64,/, "");
+
+      const payload = {
+        requests: [
+          {
+            image: {
+              content: base64Data,
+            },
+            features: [
+              {
+                type: "LABEL_DETECTION",
+                maxResults: 10,
+              },
+              {
+                type: "TEXT_DETECTION",
+                maxResults: 5,
+              },
+            ],
+          },
+        ],
+      };
+
+      const resp = await fetch(`${GOOGLE_VISION_API_URL}?key=${apiKey}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!resp.ok) {
+        const errorData = await resp.json();
+        return NextResponse.json(
+          { error: "Google Vision API error", detail: errorData },
+          { status: resp.status }
+        );
+      }
+
+      const data = await resp.json();
+      const labels = data.responses?.[0]?.labelAnnotations || [];
+      const texts = data.responses?.[0]?.textAnnotations || [];
+
+      // Analyze labels and text for civic issues
+      const allText = [
+        ...labels.map((l: { description: string }) => l.description),
+        ...texts.map((t: { description: string }) => t.description),
+      ]
+        .join(" ")
+        .toLowerCase();
+
+      let category = "none";
+      let confidence = 0.5;
+      let reason = "No civic issue detected";
+
+      // Check for potholes
+      if (
+        allText.includes("pothole") ||
+        allText.includes("hole") ||
+        (allText.includes("road") && allText.includes("damage"))
+      ) {
+        category = "Potholes";
+        confidence = 0.8;
+        reason = "Detected pothole or road damage";
+      }
+      // Check for drainage
+      else if (
+        allText.includes("drain") ||
+        allText.includes("sewer") ||
+        allText.includes("water") ||
+        allText.includes("flood")
+      ) {
+        category = "Drainage";
+        confidence = 0.8;
+        reason = "Detected drainage or water issue";
+      }
+      // Check for street lights
+      else if (
+        allText.includes("light") ||
+        allText.includes("lamp") ||
+        allText.includes("streetlight") ||
+        allText.includes("pole")
+      ) {
+        category = "Street light";
+        confidence = 0.8;
+        reason = "Detected street light or pole";
+      }
+      // Check for garbage
+      else if (
+        allText.includes("garbage") ||
+        allText.includes("trash") ||
+        allText.includes("waste") ||
+        allText.includes("litter") ||
+        allText.includes("bin")
+      ) {
+        category = "Garbage";
+        confidence = 0.8;
+        reason = "Detected garbage or waste";
+      }
+
+      return NextResponse.json({ category, confidence, reason });
+    } else if (provider === "replicate") {
+      // Replicate API - has free tier
+      const base64Data = image.replace(/^data:image\/[a-z]+;base64,/, "");
+
+      const payload = {
+        version: "2bdc38ef697fad142b9735c2e407bce4514ca2a4",
+        input: {
+          image: `data:image/jpeg;base64,${base64Data}`,
+        },
+      };
+
+      const resp = await fetch(REPLICATE_API_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Token ${apiKey}`,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!resp.ok) {
+        const errorData = await resp.json();
+        return NextResponse.json(
+          { error: "Replicate API error", detail: errorData },
+          { status: resp.status }
+        );
+      }
+
+      const data = await resp.json();
+      const predictionId = data.id;
+
+      // Poll for result (Replicate is async)
+      let attempts = 0;
+      const maxAttempts = 30;
+
+      while (attempts < maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait 1 second
+
+        const statusResp = await fetch(`${REPLICATE_API_URL}/${predictionId}`, {
+          headers: {
+            Authorization: `Token ${apiKey}`,
+          },
+        });
+
+        const statusData = await statusResp.json();
+
+        if (statusData.status === "succeeded") {
+          const description = statusData.output || "";
+          const text = description.toLowerCase();
+
+          let category = "none";
+          let confidence = 0.5;
+          let reason = "No civic issue detected";
+
+          // Check for potholes
+          if (
+            text.includes("pothole") ||
+            text.includes("hole") ||
+            (text.includes("road") && text.includes("damage"))
+          ) {
+            category = "Potholes";
+            confidence = 0.8;
+            reason = "Detected pothole or road damage";
+          }
+          // Check for drainage
+          else if (
+            text.includes("drain") ||
+            text.includes("sewer") ||
+            text.includes("water") ||
+            text.includes("flood")
+          ) {
+            category = "Drainage";
+            confidence = 0.8;
+            reason = "Detected drainage or water issue";
+          }
+          // Check for street lights
+          else if (
+            text.includes("light") ||
+            text.includes("lamp") ||
+            text.includes("streetlight") ||
+            text.includes("pole")
+          ) {
+            category = "Street light";
+            confidence = 0.8;
+            reason = "Detected street light or pole";
+          }
+          // Check for garbage
+          else if (
+            text.includes("garbage") ||
+            text.includes("trash") ||
+            text.includes("waste") ||
+            text.includes("litter") ||
+            text.includes("bin")
+          ) {
+            category = "Garbage";
+            confidence = 0.8;
+            reason = "Detected garbage or waste";
+          }
+
+          return NextResponse.json({ category, confidence, reason });
+        } else if (statusData.status === "failed") {
+          return NextResponse.json(
+            { error: "Replicate prediction failed", detail: statusData.error },
+            { status: 500 }
+          );
+        }
+
+        attempts++;
+      }
+
+      return NextResponse.json(
+        { error: "Replicate prediction timeout" },
+        { status: 500 }
+      );
+    } else if (provider === "mock") {
       // Mock response for demo - no actual API call
       const mockCategories = [
         "Potholes",
