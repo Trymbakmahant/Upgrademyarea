@@ -42,6 +42,16 @@ export default function ReportPage() {
     }>
   >([]);
   const [votingId, setVotingId] = useState<string | null>(null);
+  const [aiSuggestions, setAiSuggestions] = useState<{
+    [imageIndex: number]: {
+      category: string;
+      confidence: number | null;
+      reason: string;
+    };
+  }>({});
+  const [classifyingImages, setClassifyingImages] = useState<Set<number>>(
+    new Set()
+  );
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -49,17 +59,10 @@ export default function ReportPage() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
-  const categories = [
-    "Potholes",
-    "Streetlights",
-    "Trash Issues",
-    "Infrastructure",
-    "Drainage",
-    "Parks",
-    "Transit",
-    "Housing",
-    "Other",
-  ];
+  const categories = useMemo(
+    () => ["Potholes", "Drainage", "Street light", "Garbage"],
+    []
+  );
 
   const nagarNigamOptions = [
     "Ranchi Municipal Corporation",
@@ -200,6 +203,54 @@ export default function ReportPage() {
   const removeImage = (index: number) => {
     setImages(images.filter((_, i) => i !== index));
   };
+
+  // Classify all uploaded images
+  useEffect(() => {
+    const classifyAllImages = async () => {
+      for (let i = 0; i < images.length; i++) {
+        // Skip if already classified or currently classifying
+        if (aiSuggestions[i] || classifyingImages.has(i)) continue;
+
+        setClassifyingImages((prev) => new Set(prev).add(i));
+
+        try {
+          const res = await fetch("/api/ai/classify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ image: images[i], categories }),
+          });
+
+          if (res.ok) {
+            const data = await res.json();
+            if (data?.category) {
+              setAiSuggestions((prev) => ({
+                ...prev,
+                [i]: {
+                  category: data.category,
+                  confidence: data.confidence ?? null,
+                  reason: data.reason ?? "",
+                },
+              }));
+            }
+          }
+        } catch (e) {
+          console.error(`Failed to classify image ${i}:`, e);
+        } finally {
+          setClassifyingImages((prev) => {
+            const newSet = new Set(prev);
+            newSet.delete(i);
+            return newSet;
+          });
+        }
+      }
+    };
+
+    if (images.length > 0) {
+      classifyAllImages();
+    } else {
+      setAiSuggestions({});
+    }
+  }, [images, categories, aiSuggestions, classifyingImages]);
 
   const startVoiceRecording = async () => {
     try {
@@ -648,6 +699,36 @@ export default function ReportPage() {
                         >
                           ×
                         </button>
+
+                        {/* AI Classification Result */}
+                        <div className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-75 text-white p-2 rounded-b-lg">
+                          {classifyingImages.has(index) ? (
+                            <div className="text-xs flex items-center gap-1">
+                              <div className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin"></div>
+                              Analyzing...
+                            </div>
+                          ) : aiSuggestions[index] ? (
+                            <div className="text-xs">
+                              <div className="font-medium">
+                                {aiSuggestions[index].category === "none"
+                                  ? "No civic issue detected"
+                                  : aiSuggestions[index].category}
+                              </div>
+                              {aiSuggestions[index].confidence && (
+                                <div className="opacity-75">
+                                  {(
+                                    aiSuggestions[index].confidence! * 100
+                                  ).toFixed(0)}
+                                  % confidence
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="text-xs opacity-75">
+                              Processing...
+                            </div>
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>
